@@ -1,0 +1,28 @@
+{
+  "name": "ble-controller",
+  "version": "0.1.0",
+  "description": "Desktop controller for Magic Lantern BLE LED strips",
+  "scripts": {
+    "probe": "tsx scripts/probe.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/darshk07/ble-controller.git"
+  },
+  "bugs": {
+    "url": "https://github.com/darshk07/ble-controller/issues"
+  },
+  "homepage": "https://github.com/darshk07/ble-controller#readme",
+  "dependencies": {
+    "@stoprocent/noble": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true,
+  "type": "module"
+}
