@@ -1,9 +1,8 @@
 // Magic Lantern / MELK BLE protocol.
 // Plain TypeScript, no Node or Electron imports, so the Android app can reuse it.
 //
-// Source: Home Assistant community reverse engineering. Verify each command
-// against the real strip before trusting it; anything marked UNVERIFIED below
-// has not been tested yet.
+// Source: Home Assistant community reverse engineering. Commands marked
+// VERIFIED have been tested on Darsh's strip; anything else has not.
 
 export const SERVICE_UUID = 'fff0';
 export const WRITE_CHAR_UUID = 'fff3';
@@ -22,12 +21,12 @@ function byte(value: number, max = 255): number {
   return Math.max(0, Math.min(max, Math.round(value)));
 }
 
-// UNVERIFIED: 7E 07 05 03 RR GG BB 10 EF
+// VERIFIED (macOS): 7E 07 05 03 RR GG BB 10 EF
 export function setColor({ r, g, b }: Rgb): Uint8Array {
   return Uint8Array.of(START, 0x07, 0x05, 0x03, byte(r), byte(g), byte(b), 0x10, END);
 }
 
-// UNVERIFIED: 7E 04 01 BB 01 FF FF 00 EF, BB = 0..100
+// VERIFIED (macOS): 7E 04 01 BB 01 FF FF 00 EF, BB = 0..100
 export function setBrightness(percent: number): Uint8Array {
   return Uint8Array.of(START, 0x04, 0x01, byte(percent, 100), 0x01, 0xff, 0xff, 0x00, END);
 }
