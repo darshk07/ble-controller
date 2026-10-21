@@ -14,6 +14,11 @@ const api: LedApi = {
   disconnect: () => ipcRenderer.invoke(Channels.disconnect),
   setColor: (rgb) => ipcRenderer.invoke(Channels.setColor, rgb),
   setBrightness: (percent) => ipcRenderer.invoke(Channels.setBrightness, percent),
+  sendFrame: (rgb) => ipcRenderer.send(Channels.frame, rgb),
+  setLive: (live) => ipcRenderer.invoke(Channels.setLive, live),
+  listScreens: () => ipcRenderer.invoke(Channels.listScreens),
+  setCaptureScreen: (id) => ipcRenderer.invoke(Channels.setCaptureScreen, id),
+  platform: process.platform,
 };
 
 contextBridge.exposeInMainWorld('led', api);

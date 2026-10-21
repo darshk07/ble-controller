@@ -9,7 +9,7 @@
     "probe": "tsx scripts/probe.ts",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/mac-dev-bluetooth.mjs"
+    "postinstall": "node scripts/mac-dev-permissions.mjs"
   },
   "repository": {
     "type": "git",

@@ -23,6 +23,11 @@ export interface BleSnapshot {
   error: string | null;
 }
 
+export interface ScreenInfo {
+  id: string;
+  name: string;
+}
+
 export interface LedApi {
   getSnapshot(): Promise<BleSnapshot>;
   onSnapshot(listener: (snapshot: BleSnapshot) => void): () => void;
@@ -32,6 +37,14 @@ export interface LedApi {
   disconnect(): Promise<void>;
   setColor(rgb: Rgb): Promise<void>;
   setBrightness(percent: number): Promise<void>;
+  // Fire-and-forget animation frame; ignored while disconnected.
+  sendFrame(rgb: Rgb): void;
+  // Keeps the app from being suspended while a live mode runs in the background.
+  setLive(live: boolean): Promise<void>;
+  listScreens(): Promise<ScreenInfo[]>;
+  // Which screen getDisplayMedia captures; null means the primary display.
+  setCaptureScreen(id: string | null): Promise<void>;
+  platform: NodeJS.Platform;
 }
 
 export const Channels = {
@@ -43,4 +56,8 @@ export const Channels = {
   disconnect: 'ble:disconnect',
   setColor: 'led:set-color',
   setBrightness: 'led:set-brightness',
+  frame: 'led:frame',
+  setLive: 'app:set-live',
+  listScreens: 'capture:list-screens',
+  setCaptureScreen: 'capture:set-screen',
 } as const;

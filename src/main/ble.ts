@@ -8,6 +8,10 @@ import { SERVICE_UUID, WRITE_CHAR_UUID } from '../shared/protocol.ts';
 
 const SCAN_MS = 15_000;
 
+// Cheap controllers drop or lag on back-to-back writes, so live modes are
+// capped at this interval. Lower it if the strip keeps up; raise it if it lags.
+const MIN_WRITE_INTERVAL_MS = 40;
+
 type CommandKind = 'color' | 'brightness';
 
 export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
@@ -29,6 +33,7 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
   // the same kind replace older ones, so dragging a slider never backs up.
   private pending = new Map<CommandKind, Uint8Array>();
   private writing = false;
+  private lastWrite = 0;
 
   constructor() {
     super();
@@ -94,14 +99,25 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
     void this.flush();
   }
 
+  // Animation frames: dropped silently while disconnected.
+  frame(bytes: Uint8Array): void {
+    if (this.characteristic) this.write('color', bytes);
+  }
+
   private async flush(): Promise<void> {
     if (this.writing) return;
     this.writing = true;
     try {
       for (const [kind, bytes] of this.pending) {
         this.pending.delete(kind);
+        const wait = this.lastWrite + MIN_WRITE_INTERVAL_MS - Date.now();
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        // A newer command of this kind may have arrived while waiting.
+        const latest = this.pending.get(kind) ?? bytes;
+        this.pending.delete(kind);
         if (!this.characteristic) break;
-        await this.characteristic.writeAsync(Buffer.from(bytes), this.withoutResponse);
+        this.lastWrite = Date.now();
+        await this.characteristic.writeAsync(Buffer.from(latest), this.withoutResponse);
       }
     } catch (err) {
       this.update({ error: message(err) });
