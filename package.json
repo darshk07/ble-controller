@@ -8,7 +8,7 @@
     "build:win": "npm run build && electron-builder --win portable",
     "start": "electron-vite preview",
     "probe": "tsx scripts/probe.ts",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "node --experimental-test-module-mocks --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/mac-dev-permissions.mjs"
   },

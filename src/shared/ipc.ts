@@ -14,6 +14,15 @@ export interface DeviceInfo {
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
+// The strip this app remembers. The strip's own name can't be changed over
+// BLE (no rename command is known), so the nickname lives in the app.
+export interface SavedDevice {
+  id: string;
+  name: string; // advertised name, used as a fallback match if the id changes
+  nickname: string | null;
+  autoConnect: boolean;
+}
+
 export interface BleSnapshot {
   adapter: AdapterState;
   scanning: boolean;
@@ -21,6 +30,9 @@ export interface BleSnapshot {
   status: ConnectionStatus;
   connectedId: string | null;
   error: string | null;
+  saved: SavedDevice | null;
+  // Looking for the saved strip in the background.
+  autoConnecting: boolean;
 }
 
 export interface ScreenInfo {
@@ -35,6 +47,9 @@ export interface LedApi {
   stopScan(): Promise<void>;
   connect(id: string): Promise<void>;
   disconnect(): Promise<void>;
+  renameDevice(nickname: string): Promise<void>;
+  setAutoConnect(enabled: boolean): Promise<void>;
+  forgetDevice(): Promise<void>;
   setColor(rgb: Rgb): Promise<void>;
   setBrightness(percent: number): Promise<void>;
   // Starts one of the strip's own animations (code 0..255, speed 0..100).
@@ -56,6 +71,9 @@ export const Channels = {
   stopScan: 'ble:stop-scan',
   connect: 'ble:connect',
   disconnect: 'ble:disconnect',
+  renameDevice: 'ble:rename-device',
+  setAutoConnect: 'ble:set-auto-connect',
+  forgetDevice: 'ble:forget-device',
   setColor: 'led:set-color',
   setBrightness: 'led:set-brightness',
   setStripEffect: 'led:set-strip-effect',

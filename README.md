@@ -11,6 +11,11 @@ npm run dev
 
 Click **Connect strip**, pick the strip (devices advertising FFF0 get an *LED* tag). Close Magic Lantern on your phone first.
 
+After that the app remembers it: on launch it finds the strip and connects by itself, and reconnects if the strip is
+switched off and back on. Click the status pill to give it a nickname, turn auto-connect off, or forget it. The
+nickname is stored in the app (`device.json` in Electron's user data folder); the strip's own Bluetooth name can't be
+changed because no rename command is known for this protocol.
+
 ### Modes
 
 | Mode | What it does |

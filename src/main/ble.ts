@@ -3,11 +3,17 @@
 
 import { EventEmitter } from 'node:events';
 import noble, { type Characteristic, type Peripheral } from '@stoprocent/noble';
-import type { AdapterState, BleSnapshot, DeviceInfo } from '../shared/ipc.ts';
+import type { AdapterState, BleSnapshot, DeviceInfo, SavedDevice } from '../shared/ipc.ts';
 import { SERVICE_UUID, WRITE_CHAR_UUID } from '../shared/protocol.ts';
+import { loadSavedDevice, storeSavedDevice } from './store.ts';
 
 const SCAN_MS = 15_000;
 const CONNECT_ATTEMPTS = 3;
+
+// Auto-connect: scan this long for the saved strip, then rest before trying
+// again, so a strip switched off at the wall is picked up when it returns.
+const AUTO_SCAN_MS = 12_000;
+const AUTO_RETRY_MS = 20_000;
 
 // Write pacing. The link to MELK controllers carries about 30 frames/s;
 // faster sends queue up inside Windows and the strip falls seconds behind
@@ -29,12 +35,15 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
     status: 'disconnected',
     connectedId: null,
     error: null,
+    saved: loadSavedDevice(),
+    autoConnecting: false,
   };
   private peripheral: Peripheral | null = null;
   private characteristic: Characteristic | null = null;
   private withoutResponse = false;
   private minInterval = MIN_INTERVAL_WITH_RESPONSE_MS;
   private scanTimer: NodeJS.Timeout | null = null;
+  private autoTimer: NodeJS.Timeout | null = null;
 
   // Latest-wins write queue: while one write is in flight, newer commands of
   // the same kind replace older ones, so dragging a slider never backs up.
@@ -52,6 +61,96 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
 
   getSnapshot(): BleSnapshot {
     return this.snapshot;
+  }
+
+  // Connects to the saved strip without a click: now, and again whenever the
+  // link drops on its own. A manual disconnect stops it until next launch.
+  startAutoConnect(): void {
+    const { saved, status } = this.snapshot;
+    if (!saved?.autoConnect || status !== 'disconnected' || this.peripheral) return;
+    this.clearAutoTimer();
+    this.update({ autoConnecting: true });
+
+    // Always scan rather than reuse a cached peripheral: seeing a fresh
+    // advertisement proves the strip is powered and in range.
+    void (async () => {
+      try {
+        await noble.waitForPoweredOnAsync(15_000);
+        if (!this.snapshot.autoConnecting) return;
+        await noble.startScanningAsync([], false);
+        this.autoTimer = setTimeout(() => {
+          void this.stopScan().catch(() => {});
+          this.retryAutoConnect();
+        }, AUTO_SCAN_MS);
+      } catch {
+        this.retryAutoConnect();
+      }
+    })();
+  }
+
+  stopAutoConnect(): void {
+    this.clearAutoTimer();
+    if (this.snapshot.autoConnecting) this.update({ autoConnecting: false });
+  }
+
+  renameDevice(nickname: string): void {
+    const saved = this.snapshot.saved;
+    if (saved) this.save({ ...saved, nickname: nickname.trim() || null });
+  }
+
+  setAutoConnect(enabled: boolean): void {
+    const saved = this.snapshot.saved;
+    if (!saved) return;
+    this.save({ ...saved, autoConnect: enabled });
+    if (enabled) this.startAutoConnect();
+    else this.stopAutoConnect();
+  }
+
+  forgetDevice(): void {
+    this.stopAutoConnect();
+    this.save(null);
+  }
+
+  private isSaved(p: Peripheral): boolean {
+    const saved = this.snapshot.saved;
+    if (!saved) return false;
+    // The id is exact; the advertised name covers the id changing, e.g. after
+    // macOS resets its Bluetooth cache.
+    return p.id === saved.id || (!!saved.name && p.advertisement.localName === saved.name);
+  }
+
+  private autoBusy = false;
+
+  private async autoConnectTo(p: Peripheral): Promise<void> {
+    if (this.autoBusy || this.snapshot.status !== 'disconnected') return;
+    this.autoBusy = true;
+    this.clearAutoTimer();
+    try {
+      await this.connect(p.id);
+    } catch {
+      this.retryAutoConnect();
+    } finally {
+      this.autoBusy = false;
+    }
+  }
+
+  private retryAutoConnect(): void {
+    if (!this.snapshot.autoConnecting) return;
+    this.clearAutoTimer();
+    this.autoTimer = setTimeout(() => {
+      this.update({ autoConnecting: false });
+      this.startAutoConnect();
+    }, AUTO_RETRY_MS);
+  }
+
+  private clearAutoTimer(): void {
+    if (this.autoTimer) clearTimeout(this.autoTimer);
+    this.autoTimer = null;
+  }
+
+  private save(saved: SavedDevice | null): void {
+    storeSavedDevice(saved);
+    this.update({ saved });
   }
 
   async startScan(): Promise<void> {
@@ -90,7 +189,9 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
         this.minInterval = this.withoutResponse ? MIN_INTERVAL_WITHOUT_RESPONSE_MS : MIN_INTERVAL_WITH_RESPONSE_MS;
         console.log(`[ble] ${ch.uuid} properties: ${ch.properties.join(', ')}; using write ${this.withoutResponse ? 'without' : 'with'} response`);
         p.once('disconnect', () => this.onDisconnected(p));
-        this.update({ status: 'connected' });
+        this.clearAutoTimer();
+        this.update({ status: 'connected', autoConnecting: false });
+        this.remember(p);
         return;
       } catch (err) {
         lastErr = err;
@@ -104,6 +205,13 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
     throw new Error(error);
   }
 
+  private remember(p: Peripheral): void {
+    const prev = this.snapshot.saved;
+    const name = p.advertisement.localName || prev?.name || '';
+    const same = prev && (prev.id === p.id || (!!prev.name && prev.name === name));
+    this.save({ id: p.id, name, nickname: same ? prev.nickname : null, autoConnect: same ? prev.autoConnect : true });
+  }
+
   private async tryConnect(p: Peripheral): Promise<Characteristic> {
     await p.connectAsync();
     const { characteristics } = await p.discoverSomeServicesAndCharacteristicsAsync([SERVICE_UUID], [WRITE_CHAR_UUID]);
@@ -112,11 +220,14 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
     return ch;
   }
 
+  // A disconnect the user asked for: don't reconnect until next launch.
   async disconnect(): Promise<void> {
+    this.stopAutoConnect();
     const p = this.peripheral;
     if (!p) return;
+    this.peripheral = null;
     await p.disconnectAsync();
-    this.onDisconnected(p);
+    this.dropConnection();
   }
 
   write(kind: CommandKind, bytes: Uint8Array): void {
@@ -182,11 +293,18 @@ export class LedService extends EventEmitter<{ change: [BleSnapshot] }> {
         b.rssi - a.rssi,
     );
     this.update({ devices });
+    if (this.snapshot.autoConnecting && this.isSaved(p)) void this.autoConnectTo(p);
   }
 
+  // The link dropped on its own (strip switched off, out of range).
   private onDisconnected(p: Peripheral): void {
     if (this.peripheral !== p) return;
     this.peripheral = null;
+    this.dropConnection();
+    setTimeout(() => this.startAutoConnect(), 2000);
+  }
+
+  private dropConnection(): void {
     this.characteristic = null;
     this.pending.clear();
     this.update({ status: 'disconnected', connectedId: null });

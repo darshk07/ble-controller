@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ColorPanel } from './components/ColorPanel.tsx';
-import { DeviceSheet } from './components/DeviceSheet.tsx';
+import { DeviceSheet, displayName } from './components/DeviceSheet.tsx';
 import { EffectsPanel } from './components/EffectsPanel.tsx';
 import { MusicPanel } from './components/MusicPanel.tsx';
 import { Orb } from './components/Orb.tsx';
@@ -24,7 +24,8 @@ export function App() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const connected = snap.status === 'connected';
-  const device = snap.devices.find((d) => d.id === snap.connectedId);
+  const searching = snap.status === 'disconnected' && snap.autoConnecting;
+  const name = displayName(snap);
   const error = actionError ?? snap.error;
 
   useEffect(() => {
@@ -45,12 +46,19 @@ export function App() {
 
       <section className="hero">
         <Orb dim={settings.brightness / 100} />
-        <button className={`status ${snap.status}`} onClick={() => (connected ? run(() => window.led.disconnect()) : setSheet(true))}>
+        <button className={`status ${searching ? 'connecting' : snap.status}`} onClick={() => setSheet(true)}>
           <span className="dot" />
           <span className="status-text">
-            {connected ? device?.name ?? 'Connected' : snap.status === 'connecting' ? 'Connecting…' : 'Connect strip'}
+            {connected
+              ? name
+              : snap.status === 'connecting'
+                ? `Connecting to ${name}…`
+                : searching
+                  ? `Looking for ${name}…`
+                  : snap.saved
+                    ? `${name} · not connected`
+                    : 'Connect strip'}
           </span>
-          {connected && <span className="status-action">Disconnect</span>}
         </button>
       </section>
 

@@ -65,6 +65,9 @@ ipcMain.handle(Channels.startScan, () => led.startScan());
 ipcMain.handle(Channels.stopScan, () => led.stopScan());
 ipcMain.handle(Channels.connect, (_e, id: string) => led.connect(id));
 ipcMain.handle(Channels.disconnect, () => led.disconnect());
+ipcMain.handle(Channels.renameDevice, (_e, nickname: string) => led.renameDevice(nickname));
+ipcMain.handle(Channels.setAutoConnect, (_e, enabled: boolean) => led.setAutoConnect(enabled));
+ipcMain.handle(Channels.forgetDevice, () => led.forgetDevice());
 ipcMain.handle(Channels.setColor, (_e, rgb: Rgb) => led.write('color', setColor(rgb)));
 ipcMain.handle(Channels.setBrightness, (_e, percent: number) => led.write('brightness', setBrightness(percent)));
 ipcMain.handle(Channels.setStripEffect, (_e, code: number, speed: number) => {
@@ -87,6 +90,7 @@ ipcMain.handle(Channels.setLive, (_e, live: boolean) => {
 app.whenReady().then(() => {
   handleDisplayMedia();
   createWindow();
+  led.startAutoConnect();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

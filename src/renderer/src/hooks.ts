@@ -9,6 +9,8 @@ const initialSnapshot: BleSnapshot = {
   status: 'disconnected',
   connectedId: null,
   error: null,
+  saved: null,
+  autoConnecting: false,
 };
 
 export function useLedSnapshot(): BleSnapshot {
