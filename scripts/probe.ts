@@ -5,17 +5,28 @@
 //   npm run probe -- color <device> <rrggbb>
 //   npm run probe -- brightness <device> <0-100>
 //   npm run probe -- raw <device> "<hex bytes>"
+//   npm run probe -- power <device> on|off
+//   npm run probe -- effect <device> <code 0-255>
+//   npm run probe -- speed <device> <0-100>
+//   npm run probe -- sweep <device> [from] [to] [seconds]   walk the strip's built-in effects
+//   npm run probe -- listen <device> [seconds]              print what the strip reports on FFF4
 //
 // <device> is an id, MAC address, or part of the advertised name, as shown by `scan`.
 
 import noble, { type Characteristic, type Peripheral } from '@stoprocent/noble';
 import {
+  NOTIFY_CHAR_UUID,
   SERVICE_UUID,
+  STRIP_EFFECTS,
   WRITE_CHAR_UUID,
   parseBytes,
   parseHex,
+  queryState,
   setBrightness,
   setColor,
+  setPower,
+  setStripEffect,
+  setStripSpeed,
   toHex,
 } from '../src/shared/protocol.ts';
 
@@ -24,7 +35,12 @@ const usage = `Usage:
   npm run probe -- inspect <device>
   npm run probe -- color <device> <rrggbb>
   npm run probe -- brightness <device> <0-100>
-  npm run probe -- raw <device> "<hex bytes>"`;
+  npm run probe -- raw <device> "<hex bytes>"
+  npm run probe -- power <device> on|off
+  npm run probe -- effect <device> <code 0-255>
+  npm run probe -- speed <device> <0-100>
+  npm run probe -- sweep <device> [from=0] [to=255] [seconds=4]
+  npm run probe -- listen <device> [seconds=10]`;
 
 function label(p: Peripheral): string {
   const name = p.advertisement.localName || '(no name)';
@@ -109,18 +125,65 @@ async function inspect(query: string): Promise<void> {
   }
 }
 
-async function write(query: string, bytes: Uint8Array): Promise<void> {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function withWriter(query: string, fn: (send: (bytes: Uint8Array) => Promise<void>, p: Peripheral) => Promise<void>): Promise<void> {
   const p = await connect(query);
   try {
     const { characteristics } = await p.discoverSomeServicesAndCharacteristicsAsync([SERVICE_UUID], [WRITE_CHAR_UUID]);
     const ch: Characteristic | undefined = characteristics[0];
     if (!ch) throw new Error(`Service ${SERVICE_UUID} / characteristic ${WRITE_CHAR_UUID} not found. Run "inspect" to see what the strip exposes.`);
-    const withoutResponse = ch.properties.includes('writeWithoutResponse');
-    console.log(`Writing ${toHex(bytes)} to ${ch.uuid} (${withoutResponse ? 'without' : 'with'} response, props: ${ch.properties.join(', ')})`);
-    await ch.writeAsync(Buffer.from(bytes), withoutResponse);
-    console.log('Write OK. Did the strip change?');
+    const withoutResponse = !ch.properties.includes('write');
+    console.log(`Using ${ch.uuid} (${withoutResponse ? 'without' : 'with'} response, props: ${ch.properties.join(', ')})`);
+    await fn(async (bytes) => {
+      console.log(`→ ${toHex(bytes)}`);
+      await ch.writeAsync(Buffer.from(bytes), withoutResponse);
+    }, p);
     // Give a write-without-response time to leave the radio before disconnecting.
-    await new Promise((r) => setTimeout(r, 500));
+    await sleep(500);
+  } finally {
+    await p.disconnectAsync();
+  }
+}
+
+async function write(query: string, bytes: Uint8Array): Promise<void> {
+  await withWriter(query, async (send) => {
+    await send(bytes);
+    console.log('Write OK. Did the strip change?');
+  });
+}
+
+// Walks effect codes one by one so unnamed ones can be identified by eye.
+async function sweep(query: string, from: number, to: number, seconds: number): Promise<void> {
+  const names = new Map(STRIP_EFFECTS.map((e) => [e.code, e.name]));
+  await withWriter(query, async (send) => {
+    await send(setStripSpeed(50));
+    for (let code = from; code <= to; code++) {
+      const name = names.get(code);
+      console.log(`
+Effect ${code} (0x${code.toString(16).padStart(2, '0')})${name ? ` "${name}"` : ''}`);
+      await send(setStripEffect(code));
+      await sleep(seconds * 1000);
+    }
+  });
+}
+
+// Subscribes to the notify characteristic, asks for state, and prints replies.
+async function listen(query: string, seconds: number): Promise<void> {
+  const p = await connect(query);
+  try {
+    const { characteristics } = await p.discoverSomeServicesAndCharacteristicsAsync([SERVICE_UUID], [WRITE_CHAR_UUID, NOTIFY_CHAR_UUID]);
+    const writer = characteristics.find((c) => c.uuid === WRITE_CHAR_UUID);
+    const notifier = characteristics.find((c) => c.uuid === NOTIFY_CHAR_UUID);
+    if (!notifier) throw new Error(`No ${NOTIFY_CHAR_UUID} characteristic. Run "inspect" to see what the strip exposes.`);
+    notifier.on('data', (data: Buffer) => console.log(`← ${toHex(data)}`));
+    await notifier.subscribeAsync();
+    console.log(`Listening on ${NOTIFY_CHAR_UUID} for ${seconds}s. Change things with the remote or buttons to see more.`);
+    if (writer) {
+      console.log(`→ ${toHex(queryState())} (state query)`);
+      await writer.writeAsync(Buffer.from(queryState()), !writer.properties.includes('write'));
+    }
+    await sleep(seconds * 1000);
   } finally {
     await p.disconnectAsync();
   }
@@ -143,6 +206,23 @@ async function main(): Promise<void> {
     case 'raw':
       if (!device || !arg) break;
       return write(device, parseBytes(arg));
+    case 'power':
+      if (!device || (arg !== 'on' && arg !== 'off')) break;
+      return write(device, setPower(arg === 'on'));
+    case 'effect':
+      if (!device || !arg) break;
+      return write(device, setStripEffect(Number(arg)));
+    case 'speed':
+      if (!device || !arg) break;
+      return write(device, setStripSpeed(Number(arg)));
+    case 'sweep': {
+      if (!device) break;
+      const [from = 0, to = 255, seconds = 4] = process.argv.slice(4).map(Number);
+      return sweep(device, from, to, seconds);
+    }
+    case 'listen':
+      if (!device) break;
+      return listen(device, Number(arg) || 10);
   }
   console.log(usage);
   process.exitCode = 1;

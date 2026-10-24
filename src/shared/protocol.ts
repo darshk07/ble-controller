@@ -31,8 +31,64 @@ export function setBrightness(percent: number): Uint8Array {
   return Uint8Array.of(START, 0x04, 0x01, byte(percent, 100), 0x01, 0xff, 0xff, 0x00, END);
 }
 
-// Power, mode and speed bytes are not documented yet. Capture them from the
-// stock app before adding them here.
+// The commands below are UNVERIFIED on this strip. They come from the MELK-Ox
+// profile (MELK-OA10/OC10/OF10/OG10) in the elkbledom Home Assistant
+// integration and the neon-lights project, whose brightness frame matches the
+// verified one above. Test with `npm run probe` before relying on them.
+
+export const NOTIFY_CHAR_UUID = 'fff4';
+
+export function setPower(on: boolean): Uint8Array {
+  return on
+    ? Uint8Array.of(START, 0x04, 0x04, 0xf0, 0x00, 0x01, 0xff, 0x00, END)
+    : Uint8Array.of(START, 0x04, 0x04, 0x00, 0x00, 0x00, 0xff, 0x00, END);
+}
+
+// Starts an animation that runs inside the strip's controller. These are
+// rendered per LED at the controller's own frame rate, so they are perfectly
+// smooth and can show several colors along the strip at once, which streamed
+// color commands cannot. Codes are one byte; see STRIP_EFFECTS.
+export function setStripEffect(code: number): Uint8Array {
+  return Uint8Array.of(START, 0x05, 0x03, byte(code), 0x06, 0xff, 0xff, 0x00, END);
+}
+
+// Speed of the strip's own animations, 0..100.
+export function setStripSpeed(percent: number): Uint8Array {
+  return Uint8Array.of(START, 0x04, 0x02, byte(percent, 100), 0xff, 0xff, 0xff, 0x00, END);
+}
+
+// Music modes driven by a microphone on the controller (if it has one), 0x80..0x87.
+export function setMicEffect(code: number): Uint8Array {
+  return Uint8Array.of(START, 0x05, 0x03, byte(code), 0x04, 0xff, 0xff, 0x00, END);
+}
+
+export function setMicSensitivity(percent: number): Uint8Array {
+  return Uint8Array.of(START, 0x04, 0x06, byte(percent, 100), 0xff, 0xff, 0xff, 0x00, END);
+}
+
+// Asks the controller to report its state on NOTIFY_CHAR_UUID.
+export function queryState(): Uint8Array {
+  return Uint8Array.of(START, 0x00, 0x01, 0xfa, 0x00, 0x00, 0x00, 0x00, END);
+}
+
+// Named codes known for MELK-Ox controllers. The byte has 256 values and the
+// Magic Lantern app lists far more modes; `npm run probe -- sweep` walks them
+// so new ones can be named here.
+export const STRIP_EFFECTS: { code: number; name: string }[] = [
+  { code: 0, name: 'Auto play' },
+  { code: 1, name: 'Magic back' },
+  { code: 2, name: 'Effect 2' },
+  { code: 3, name: 'Effect 3' },
+  { code: 4, name: 'Effect 4' },
+  { code: 5, name: 'Effect 5' },
+  { code: 16, name: 'Rainbow cycle' },
+  { code: 32, name: 'Color wave' },
+  { code: 48, name: 'Breathing' },
+  { code: 64, name: 'Strobe' },
+  { code: 128, name: 'Jump RGB' },
+  { code: 144, name: 'Fade RGB' },
+  { code: 207, name: 'Blue scroll' },
+];
 
 export function parseHex(hex: string): Rgb {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());

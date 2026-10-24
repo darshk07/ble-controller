@@ -14,6 +14,7 @@ const api: LedApi = {
   disconnect: () => ipcRenderer.invoke(Channels.disconnect),
   setColor: (rgb) => ipcRenderer.invoke(Channels.setColor, rgb),
   setBrightness: (percent) => ipcRenderer.invoke(Channels.setBrightness, percent),
+  setStripEffect: (code, speed) => ipcRenderer.invoke(Channels.setStripEffect, code, speed),
   sendFrame: (rgb) => ipcRenderer.send(Channels.frame, rgb),
   setLive: (live) => ipcRenderer.invoke(Channels.setLive, live),
   listScreens: () => ipcRenderer.invoke(Channels.listScreens),

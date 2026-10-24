@@ -1,15 +1,17 @@
-// The light engine: turns the current mode into a stream of colors at 30 fps
-// and sends them to the strip. Lives in the renderer because that is where the
+// The light engine: turns the current mode into a stream of colors at 60 fps
+// and sends them to the strip (the BLE layer forwards at most ~30/s, newest
+// first), or hands animation over to the strip's own effects. Lives in the renderer because that is where the
 // screen and audio capture APIs are.
 
 import { AudioAnalyser, type AudioFrame } from '../../../shared/analysis.ts';
-import { BLACK, clamp01, hsv, mix, round, same, saturate, scale } from '../../../shared/color.ts';
+import { BLACK, blend, clamp01, easeInOut, hsv, round, same, saturate, scale } from '../../../shared/color.ts';
 import { getEffect } from '../../../shared/effects.ts';
 import type { Rgb } from '../../../shared/protocol.ts';
 import { AudioTap, ScreenCapture, captureMicrophone, captureSystemAudio } from './capture.ts';
 
 export type Mode = 'color' | 'effect' | 'screen' | 'music';
-export type MusicStyle = 'pulse' | 'spectrum' | 'beat';
+export type MusicStyle = 'pulse' | 'spectrum' | 'beat' | 'strip';
+export type EffectSource = 'app' | 'strip';
 export type AudioSource = 'system' | 'mic';
 
 export interface Settings {
@@ -18,6 +20,9 @@ export interface Settings {
   brightness: number; // 1..100, sent as the strip's own brightness command
   effectId: string;
   speed: number; // 0.25..3
+  effectSource: EffectSource; // app-rendered effects, or the strip's own
+  stripEffect: number; // 0..255 code for the strip's own animation
+  stripSpeed: number; // 0..100
   screenId: string | null;
   vividness: number; // 1..2, saturation boost for screen colors
   smoothing: number; // 0..1
@@ -49,6 +54,9 @@ const DEFAULTS: Settings = {
   brightness: 100,
   effectId: 'rainbow',
   speed: 1,
+  effectSource: 'app',
+  stripEffect: 16,
+  stripSpeed: 50,
   screenId: null,
   vividness: 1.4,
   smoothing: 0.6,
@@ -59,7 +67,11 @@ const DEFAULTS: Settings = {
 };
 
 const STORAGE_KEY = 'lantern.settings';
-const TICK_MS = 33;
+const TICK_MS = 1000 / 60;
+// Smoothing constants below were tuned per frame at this rate; tick() rescales
+// them to the real frame time so the feel doesn't change with the tick rate.
+const TUNED_FPS = 30;
+const COLOR_FADE_MS = 450;
 
 function load(): Settings {
   try {
@@ -78,7 +90,7 @@ export class Engine {
 
   private screen: ScreenCapture | null = null;
   private audio: AudioTap | null = null;
-  private analyser = new AudioAnalyser();
+  private analyser = new AudioAnalyser(0.5, 40, 1000 / TICK_MS);
   private captureKey = 'none';
   private captureRun = 0;
 
@@ -87,6 +99,9 @@ export class Engine {
   private sent: Rgb | null = null;
   private beatHue = Math.random();
   private beatEnv = 0;
+  private fade: { from: Rgb; to: Rgb; start: number } | null = null;
+  private stripKey: string | null = null;
+  private sentBrightness: number | null = null;
 
   constructor() {
     setInterval(() => this.tick(), TICK_MS);
@@ -119,9 +134,6 @@ export class Engine {
     } catch {
       // Settings just won't persist.
     }
-    if (patch.brightness !== undefined && patch.brightness !== prev.brightness) {
-      void window.led.setBrightness(settings.brightness).catch(() => {});
-    }
     if (patch.sensitivity !== undefined) this.analyser.sensitivity = settings.sensitivity;
     void this.reconcile();
   }
@@ -129,7 +141,8 @@ export class Engine {
   // Re-send everything after (re)connecting.
   resync(): void {
     this.sent = null;
-    void window.led.setBrightness(this.state.settings.brightness).catch(() => {});
+    this.stripKey = null;
+    this.sentBrightness = null;
   }
 
   retryCapture(): void {
@@ -174,7 +187,7 @@ export class Engine {
       if (run !== this.captureRun) throw new Error('superseded');
       this.screen = screen;
       this.audio = audio;
-      this.analyser = new AudioAnalyser(s.sensitivity);
+      this.analyser = new AudioAnalyser(s.sensitivity, 40, 1000 / TICK_MS);
       this.setState({ capture: { state: 'running', error: null } });
     } catch (err) {
       screen?.stop();
@@ -204,11 +217,18 @@ export class Engine {
     let alpha = 1;
 
     switch (s.mode) {
-      case 'color':
-        target = s.color;
-        alpha = 0.18; // fade between colors instead of jumping
+      case 'color': {
+        // Timed, eased crossfade. A new color mid-fade starts from wherever
+        // the light is right now, so dragging the wheel stays continuous.
+        if (!this.fade || !same(this.fade.to, s.color)) {
+          this.fade = { from: this.frame.output, to: s.color, start: now };
+        }
+        const t = easeInOut((now - this.fade.start) / COLOR_FADE_MS);
+        target = blend(this.fade.from, this.fade.to, t);
         break;
+      }
       case 'effect':
+        if (s.effectSource === 'strip') break; // the strip animates itself
         this.effectTime += dt * s.speed;
         target = getEffect(s.effectId).render({ t: this.effectTime, color: s.color });
         break;
@@ -223,25 +243,58 @@ export class Engine {
         break;
       }
       case 'music':
-        if (audio) target = this.musicColor(s, audio);
+        if (audio) target = this.musicColor(s, audio, dt, now);
         // Fast attack, slower release, like a VU meter.
         alpha = brightness(target) > brightness(this.frame.output) ? 0.75 : 0.25;
         break;
     }
 
-    const output = mix(this.frame.output, target, alpha);
+    if (s.mode !== 'color') this.fade = null;
+    const k = alpha >= 1 ? 1 : 1 - Math.pow(1 - alpha, dt * TUNED_FPS);
+    const output = blend(this.frame.output, target, k);
     this.frame = { output, audio, spectrum: this.audio?.spectrum ?? null };
     this.frameListeners.forEach((l) => l(this.frame));
 
+    // The strip's own animation: start it once, and stop streaming colors
+    // over it. Leaving it re-sends the current color.
+    const strip = (s.mode === 'effect' && s.effectSource === 'strip') || (s.mode === 'music' && s.musicStyle === 'strip');
+    if (strip) {
+      const key = `${s.stripEffect}:${s.stripSpeed}`;
+      if (key !== this.stripKey) {
+        this.stripKey = key;
+        void window.led.setStripEffect(s.stripEffect, s.stripSpeed).catch(() => {});
+      }
+    } else if (this.stripKey !== null) {
+      this.stripKey = null;
+      this.sent = null;
+    }
+
+    // Hardware brightness. In strip-music mode it follows the music while the
+    // strip animates by itself, so the animation stays smooth at any BLE rate.
+    let percent = s.brightness;
+    if (s.mode === 'music' && s.musicStyle === 'strip') {
+      percent = Math.max(1, Math.round(s.brightness * (0.08 + 0.92 * (brightness(output) / 255))));
+    }
+    if (percent !== this.sentBrightness) {
+      this.sentBrightness = percent;
+      void window.led.setBrightness(percent).catch(() => {});
+    }
+
     const rounded = round(output);
-    if (!this.sent || !same(rounded, this.sent)) {
+    if (!strip && (!this.sent || !same(rounded, this.sent))) {
       this.sent = rounded;
       window.led.sendFrame(rounded);
     }
   }
 
-  private musicColor(s: Settings, a: AudioFrame): Rgb {
+  private musicColor(s: Settings, a: AudioFrame, dt: number, now: number): Rgb {
     switch (s.musicStyle) {
+      case 'strip':
+        // Only the envelope matters (it drives brightness); the hue just
+        // gives the preview some motion.
+        if (a.beat) this.beatEnv = 1;
+        else this.beatEnv *= Math.pow(0.9, dt * TUNED_FPS);
+        return hsv(now / 6000, 0.8, 0.1 + 0.9 * Math.max(this.beatEnv, a.level));
       case 'pulse':
         return scale(s.color, 0.04 + 0.96 * Math.max(a.level, a.beat ? 1 : 0));
       case 'spectrum':
@@ -252,7 +305,7 @@ export class Engine {
           this.beatHue = (this.beatHue + 0.618) % 1;
           this.beatEnv = 1;
         } else {
-          this.beatEnv *= 0.9;
+          this.beatEnv *= Math.pow(0.9, dt * TUNED_FPS);
         }
         return hsv(this.beatHue, 1, Math.max(this.beatEnv, 0.25 * a.level));
     }

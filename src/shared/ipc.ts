@@ -37,6 +37,8 @@ export interface LedApi {
   disconnect(): Promise<void>;
   setColor(rgb: Rgb): Promise<void>;
   setBrightness(percent: number): Promise<void>;
+  // Starts one of the strip's own animations (code 0..255, speed 0..100).
+  setStripEffect(code: number, speed: number): Promise<void>;
   // Fire-and-forget animation frame; ignored while disconnected.
   sendFrame(rgb: Rgb): void;
   // Keeps the app from being suspended while a live mode runs in the background.
@@ -56,6 +58,7 @@ export const Channels = {
   disconnect: 'ble:disconnect',
   setColor: 'led:set-color',
   setBrightness: 'led:set-brightness',
+  setStripEffect: 'led:set-strip-effect',
   frame: 'led:frame',
   setLive: 'app:set-live',
   listScreens: 'capture:list-screens',

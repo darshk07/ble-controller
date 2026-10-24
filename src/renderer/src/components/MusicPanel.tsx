@@ -5,6 +5,7 @@ import { useEngine, useFrame } from '../hooks.ts';
 import { CaptureStatus } from './CaptureStatus.tsx';
 import { Segmented } from './Segmented.tsx';
 import { Slider } from './Slider.tsx';
+import { StripEffectPicker } from './StripEffectPicker.tsx';
 import { Swatches } from './Swatches.tsx';
 
 const BARS = 32;
@@ -54,6 +55,7 @@ export function MusicPanel() {
           { value: 'beat', label: 'Beat' },
           { value: 'spectrum', label: 'Spectrum' },
           { value: 'pulse', label: 'Pulse' },
+          { value: 'strip', label: 'Strip FX' },
         ]}
         onChange={(musicStyle) => engine.update({ musicStyle })}
       />
@@ -61,7 +63,9 @@ export function MusicPanel() {
         {settings.musicStyle === 'beat' && 'Jumps to a new color on every beat.'}
         {settings.musicStyle === 'spectrum' && 'Bass glows warm, vocals and highs glow cool.'}
         {settings.musicStyle === 'pulse' && 'Your color, breathing with the loudness.'}
+        {settings.musicStyle === 'strip' && "The strip runs its own smooth animation; the music drives its brightness."}
       </p>
+      {settings.musicStyle === 'strip' && <StripEffectPicker />}
       {settings.musicStyle === 'pulse' && <Swatches color={settings.color} onChange={(color) => engine.update({ color })} />}
       <Slider label="Sensitivity" min={0} max={1} step={0.05} value={settings.sensitivity} format={(v) => `${Math.round(v * 100)}%`} onChange={(sensitivity) => engine.update({ sensitivity })} />
       <AudioSourcePicker />

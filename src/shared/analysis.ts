@@ -54,18 +54,26 @@ export class AudioAnalyser {
   private bassPeak = 1e-3;
   private history: number[] = [];
   private lastBeat = -Infinity;
+  private historySize: number;
+  private peakDecay: number;
 
+  // historyFrames and the 0.996 peak decay are tuned at 30 fps; both are
+  // rescaled for the actual rate so timing feels the same at any fps.
   constructor(
     public sensitivity = 0.5, // 0..1
-    private historySize = 40,
-  ) {}
+    historyFrames = 40,
+    fps = 30,
+  ) {
+    this.historySize = Math.round((historyFrames * fps) / 30);
+    this.peakDecay = Math.pow(0.996, 30 / fps);
+  }
 
   update(bands: { bass: number; mid: number; treble: number }, now: number): AudioFrame {
     const energy = bands.bass + bands.mid + bands.treble;
 
     // Automatic gain: peaks decay slowly so quiet songs still fill the range.
-    this.peak = Math.max(energy, this.peak * 0.996, 0.02);
-    this.bassPeak = Math.max(bands.bass, this.bassPeak * 0.996, 0.01);
+    this.peak = Math.max(energy, this.peak * this.peakDecay, 0.02);
+    this.bassPeak = Math.max(bands.bass, this.bassPeak * this.peakDecay, 0.01);
 
     const avg = this.history.length ? this.history.reduce((a, b) => a + b, 0) / this.history.length : bands.bass;
     this.history.push(bands.bass);

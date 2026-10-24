@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { app, BrowserWindow, desktopCapturer, ipcMain, powerSaveBlocker, screen, session } from 'electron';
 import { Channels, type ScreenInfo } from '../shared/ipc.ts';
-import { setBrightness, setColor, type Rgb } from '../shared/protocol.ts';
+import { setBrightness, setColor, setStripEffect, setStripSpeed, type Rgb } from '../shared/protocol.ts';
 import { LedService } from './ble.ts';
 
 const led = new LedService();
@@ -67,6 +67,10 @@ ipcMain.handle(Channels.connect, (_e, id: string) => led.connect(id));
 ipcMain.handle(Channels.disconnect, () => led.disconnect());
 ipcMain.handle(Channels.setColor, (_e, rgb: Rgb) => led.write('color', setColor(rgb)));
 ipcMain.handle(Channels.setBrightness, (_e, percent: number) => led.write('brightness', setBrightness(percent)));
+ipcMain.handle(Channels.setStripEffect, (_e, code: number, speed: number) => {
+  led.write('speed', setStripSpeed(speed));
+  led.write('effect', setStripEffect(code));
+});
 ipcMain.on(Channels.frame, (_e, rgb: Rgb) => led.frame(setColor(rgb)));
 ipcMain.handle(Channels.listScreens, () => listScreens());
 ipcMain.handle(Channels.setCaptureScreen, (_e, id: string | null) => {

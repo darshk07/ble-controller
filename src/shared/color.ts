@@ -50,6 +50,21 @@ export function mix(a: Rgb, b: Rgb, t: number): Rgb {
   return { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t };
 }
 
+// Like mix, but keeps brightness (the max channel) moving linearly too, so
+// red→blue passes through a full purple instead of dipping to a dim one.
+export function blend(a: Rgb, b: Rgb, t: number): Rgb {
+  const m = mix(a, b, t);
+  const peak = Math.max(m.r, m.g, m.b);
+  if (!peak) return m;
+  const want = Math.max(a.r, a.g, a.b) + (Math.max(b.r, b.g, b.b) - Math.max(a.r, a.g, a.b)) * t;
+  return scale(m, want / peak);
+}
+
+export function easeInOut(t: number): number {
+  t = clamp01(t);
+  return t * t * (3 - 2 * t);
+}
+
 // Cosine-eased walk through a looping palette; t in palette steps.
 export function palette(colors: Rgb[], t: number): Rgb {
   const n = colors.length;

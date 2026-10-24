@@ -1,9 +1,11 @@
 import { useRef } from 'react';
 import { css } from '../../../shared/color.ts';
 import { EFFECTS, getEffect } from '../../../shared/effects.ts';
-import { engine } from '../engine/engine.ts';
+import { engine, type EffectSource } from '../engine/engine.ts';
 import { useEngine, useFrame } from '../hooks.ts';
+import { Segmented } from './Segmented.tsx';
 import { Slider } from './Slider.tsx';
+import { StripEffectPicker } from './StripEffectPicker.tsx';
 import { Swatches } from './Swatches.tsx';
 
 export function EffectsPanel() {
@@ -18,8 +20,30 @@ export function EffectsPanel() {
     }
   });
 
+  const source = (
+    <Segmented<EffectSource>
+      value={settings.effectSource}
+      options={[
+        { value: 'app', label: 'From the app' },
+        { value: 'strip', label: 'Built into strip' },
+      ]}
+      onChange={(effectSource) => engine.update({ effectSource })}
+    />
+  );
+
+  if (settings.effectSource === 'strip') {
+    return (
+      <div className="panel">
+        {source}
+        <p className="hint">Runs on the strip itself: perfectly smooth, and multi-color along the strip. Slide the effect code to discover more.</p>
+        <StripEffectPicker />
+      </div>
+    );
+  }
+
   return (
     <div className="panel">
+      {source}
       <div className="effects">
         {EFFECTS.map((e) => (
           <button
